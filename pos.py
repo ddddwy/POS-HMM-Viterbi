@@ -7,18 +7,19 @@ Created on Thu Oct 25 21:36:31 2018
 
 import collections
 import numpy as np
+import nltk
+nltk.download('treebank')
+from nltk.corpus import treebank
 
-def build_vocab(file_path, freq):
+
+def build_vocab(corpus, freq):
   # get the words and tags
   words=[]
   tags=[]
-  with open(file_path) as f:
-    lines=f.readlines()
-    for line in lines:
-      tokens=line.split()
-      for token in tokens:
-        words.append(token.split('/')[0])
-        tags.append(token.split('/')[1])
+  for sent in corpus:
+    for tokens in sent:
+      words.append(tokens[0])
+      tags.append(tokens[1])
   tag_cols=list(set(tags))
   tag_cols.sort()
   
@@ -34,17 +35,14 @@ def build_vocab(file_path, freq):
   return vocab, words, tag_cols
 
 
-def compute_transition_matrix(file_path, tag_cols):
+def compute_transition_matrix(corpus, tag_cols):
   # get the tags
   tags_in_line=[]
-  with open(file_path) as f:
-    lines=f.readlines()
-    for line in lines:
-      tokens=line.split()
-      tags_per_line=[]
-      for token in tokens:
-        tags_per_line.append(token.split('/')[1])
-      tags_in_line.append(tags_per_line)
+  for sent in corpus:
+    tags_per_line=[]
+    for tokens in sent:
+      tags_per_line.append(tokens[1])
+    tags_in_line.append(tags_per_line)
   
   # compute the transition counts matrix
   cor_matrix=np.zeros((len(tag_cols), len(tag_cols)))
@@ -63,23 +61,11 @@ def compute_transition_matrix(file_path, tag_cols):
   return cor_matrix
 
 
-def compute_emission_matrix(file_path, vocab, tag_cols):
-  # get the word-tag pairs
-  tokens_in_line=[]
-  with open(file_path) as f:
-    lines=f.readlines()
-    for line in lines:
-      tokens=line.split()
-      tokens_per_line=[]
-      for token in tokens:
-        items=token.split('/')
-        tokens_per_line.append(items)
-      tokens_in_line.append(tokens_per_line)
-  
+def compute_emission_matrix(corpus, vocab, tag_cols):
   # compute the emission counts matrix
   cor_matrix=np.zeros((len(tag_cols), len(vocab.keys())))
-  for line in tokens_in_line:
-    for tokens in line:
+  for sent in corpus:
+    for tokens in sent:
       idx_x=tag_cols.index(tokens[1])
       if tokens[0] in vocab.keys():
         idx_y=vocab[tokens[0]]
@@ -104,29 +90,6 @@ def estimate_emission_prob(x_now, y_now, emission_matrix, vocab, tag_cols, alpha
     idx_y=vocab['UNK']
   p=(emission_matrix[idx_x][idx_y]+alpha)/(np.sum(emission_matrix[idx_x])+alpha*len(vocab.keys()))
   return p
-
-
-def gen_tprob(out_file, trans_matrix, tag_cols, beta):
-  outs=open(out_file, 'w', encoding='utf8')
-  for tag_i_1 in tag_cols:
-    for tag_i in tag_cols:
-      p=estimate_transition_prob(y_now=tag_i, y_pre=tag_i_1, trans_matrix=trans_matrix,
-                                 tag_cols=tag_cols, beta=beta)
-      outs.write(tag_i_1+','+tag_i+','+str(p)+'\n')
-  outs.close()
-
-
-def gen_eprob(out_file, emission_matrix, words, tag_cols, vocab, alpha):
-  outs=open(out_file, 'w', encoding='utf8')
-  for tag in tag_cols:
-    for word in words:
-      if tag=='START' or tag=='END':
-        continue
-      else:
-        p=estimate_emission_prob(x_now=word, y_now=tag, emission_matrix=emission_matrix,
-                                 vocab=vocab, tag_cols=tag_cols, alpha=alpha)
-        outs.write(tag+','+word+','+str(p)+'\n')
-  outs.close()
 
   
 def viterbi(sentence, vocab, tag_cols, trans_matrix, emission_matrix, alpha, beta):
@@ -177,45 +140,45 @@ def viterbi(sentence, vocab, tag_cols, trans_matrix, emission_matrix, alpha, bet
   return y_m, v, b
 
 
-def get_dev_acc(alpha, beta):
+def get_dev_acc(corpus, alpha, beta, vocab, tag_cols, trans_matrix, emission_matrix):
   acc_num=0.
   total_num=0.
-  with open('dev.pos') as f:
-    lines=f.readlines()
-    for line in lines:
-      tokens=line.split()
-      sent=[]
-      label=[]
-      for token in tokens:
-        items=token.split('/')
-        sent.append(items[0])
-        label.append(items[1])
-      preds, v, b=viterbi(sentence=sent, vocab=vocab, tag_cols=tag_cols, 
-                          trans_matrix=trans_matrix, emission_matrix=emission_matrix, 
-                          alpha=alpha, beta=beta)
-      for pred, truth in zip(preds, label):
-        if pred==truth:
-          acc_num+=1
-      total_num+=len(label)
+  for sent in corpus:
+    words=[]
+    label=[]
+    for tokens in sent:
+      words.append(tokens[0])
+      label.append(tokens[1])
+    preds, v, b=viterbi(sentence=words, vocab=vocab, tag_cols=tag_cols, 
+                        trans_matrix=trans_matrix, emission_matrix=emission_matrix, 
+                        alpha=alpha, beta=beta)
+    for pred, truth in zip(preds, label):
+      if pred==truth:
+        acc_num+=1
+    total_num+=len(label)
   return acc_num/total_num
 
   
 if __name__=='__main__':
+  # get the corpus
+  sentences=list(treebank.tagged_sents(tagset='universal'))
+  
   # build vocab
-  vocab, words, tag_cols=build_vocab(file_path='trn.pos', freq=3)
+  vocab, words, tag_cols=build_vocab(corpus=sentences, freq=3)
   tag_cols.insert(0, 'START')
   tag_cols.insert(len(tag_cols), 'END')
   
   # get transition table
-  trans_matrix=compute_transition_matrix(file_path='trn.pos', tag_cols=tag_cols)
+  trans_matrix=compute_transition_matrix(corpus=sentences, tag_cols=tag_cols)
+  
   # get emission table
-  emission_matrix=compute_emission_matrix(file_path='trn.pos', vocab=vocab, tag_cols=tag_cols)
+  emission_matrix=compute_emission_matrix(corpus=sentences, vocab=vocab, tag_cols=tag_cols)
   
   # predict the word-tag pairs
-  a=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-  b=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  a=[0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1]
+  b=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
   for aa in a:
     for bb in b:
-      acc=get_dev_acc(aa, bb)
-      print('alpha='+str(aa)+', beta='+str(bb)+', overal_accuracy=', acc)
-  
+      acc=get_dev_acc(corpus=sentences, alpha=aa, beta=bb, vocab=vocab, tag_cols=tag_cols, 
+                      trans_matrix=trans_matrix, emission_matrix=emission_matrix)
+      print('alpha='+str(aa)+', beta='+str(bb)+', overal_accuracy='+str(acc))
